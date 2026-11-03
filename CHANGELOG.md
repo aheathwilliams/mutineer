@@ -6,6 +6,37 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **RSpec on `--daemon`.** `--daemon` no longer refuses `--framework rspec`.
+  Each worker runs the covering spec files in its own forked child against its
+  own test database, so a Rails app with RSpec on a SQLite file, PostgreSQL or
+  MySQL 8 now runs mutants in parallel. The fixture app gained a `spec/`
+  suite, and `test/runner_daemon_rspec_test.rb` checks that `--jobs 2` gives
+  the verdicts of `--jobs 1` and of the Minitest twin suite.
+- **SQL Server worker databases on `--rails --daemon`.** With
+  `activerecord-sqlserver-adapter`, Mutineer backs the test database up once
+  and restores it as `<base>-mutineer-<N>` for each worker, so Minitest and
+  RSpec run mutants in parallel on SQL Server 2019 or later. The restore keeps
+  identity seeds, keys, and triggers. An application lock stops a second run
+  on the same test database. The login needs `dbcreator` and BACKUP
+  permission. Azure SQL Database is not supported. A new `rails-sqlserver` CI
+  job runs the daemon tests on SQL Server 2022.
+
+### Fixed
+
+- **`--rails --daemon` boots an Active Record app without Rails.** A gem that
+  connects with `establish_connection` and boots through `--boot FILE` failed
+  with `uninitialized constant Rails`: Active Record looks the schema folder
+  up on `Rails` unless `DatabaseTasks.db_dir` is set. That app now has no
+  schema file to load, and its workers get their own databases as a Rails
+  app's do.
+- **An RSpec database error scores `errored`, not `killed` (#347).** When the
+  first failing example failed with an Active Record connection or lock error,
+  the run now has no verdict, as under Minitest (#296), and stderr names the
+  error. This holds in-process and on `--daemon`. A `--matrix` row still
+  names that example as a kill.
+
 ## [1.8.1] - 2026-11-02
 
 ### Fixed

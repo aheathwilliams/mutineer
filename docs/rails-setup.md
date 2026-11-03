@@ -7,7 +7,7 @@ Start with one model, then follow the [Rails rollout guide](rails.md) to a CI ga
 **Prompt for your coding agent**
 
 ```text
-Check this Rails app for Mutineer's --daemon backend. Report: the test framework (Minitest or RSpec), the test database adapter and version from config/database.yml (sqlite3 file, :memory:, postgresql, mysql2/trilogy and the MySQL server version), whether there is more than one database, and whether tests commit rows outside a transaction. Using the support matrix at https://github.com/davidteren/mutineer#is-it-production-ready, say whether to run with --rails --daemon or with --rails alone, and give the exact command for app/models.
+Check this Rails app for Mutineer's --daemon backend. Report: the test framework (Minitest or RSpec), the test database adapter and version from config/database.yml (sqlite3 file, :memory:, postgresql, mysql2/trilogy and the MySQL server version, sqlserver and the SQL Server version), whether there is more than one database, and whether tests commit rows outside a transaction. Using the support matrix at https://github.com/davidteren/mutineer#is-it-production-ready, say whether to run with --rails --daemon or with --rails alone, and give the exact command for app/models.
 ```
 
 ## Set up
@@ -135,7 +135,7 @@ Loading the schema removes copied rows from tables it defines.
 | Missing file or `structure.sql` | Leaves the copy unchanged. |
 | `schema_dump: false` | Leaves the copy unchanged unless `SCHEMA` is set. |
 
-Supported databases are **SQLite**, **PostgreSQL**, and **MySQL 8**, with Minitest.
+Supported databases are **SQLite**, **PostgreSQL**, **MySQL 8**, and **SQL Server 2019 or later**, with Minitest or RSpec.
 
 | Database | Worker provisioning and cleanup |
 | --- | --- |
@@ -144,6 +144,8 @@ Supported databases are **SQLite**, **PostgreSQL**, and **MySQL 8**, with Minite
 | MySQL 8 | Creates `<base>-mutineer-<N>`, shortened to fit 64 bytes. Loads `schema.rb` or `structure.sql`, then copies rows before workers start. |
 | MySQL recovery | Does not recopy after an error or timeout. Databases remain after the run; the next run drops and rebuilds them. |
 | MySQL cleanup | Run ``DROP DATABASE `myapp_test-mutineer-0`;``. MySQL requires backticks around the name. |
+| SQL Server | Backs the test database up once (`COPY_ONLY`) and restores it as `<base>-mutineer-<N>` before workers start. Databases remain after the run; the next run drops and restores them. |
+| SQL Server cleanup | Run `DROP DATABASE [myapp_test-mutineer-0];`. |
 | `:memory:` | Not supported by `--daemon`. |
 
 | MySQL requirement or limit | Detail |
@@ -160,6 +162,16 @@ Supported databases are **SQLite**, **PostgreSQL**, and **MySQL 8**, with Minite
 | Older MySQL fallback | Use `--no-daemon` or `daemon: false`. The run is serial. |
 | MariaDB or MySQL 9 or later | Untested. Prints a warning and runs. |
 | Unreadable server version | Prints a warning and runs. |
+
+| SQL Server requirement or limit | Detail |
+| --- | --- |
+| Adapter | `activerecord-sqlserver-adapter` with `tiny_tds`. |
+| Permissions | The test login needs `dbcreator` (create, restore, and drop the worker databases) and BACKUP DATABASE on the test database. |
+| Files | Backup goes to the server's default backup folder. Worker data and log files go beside the test database's own files, so that disk needs room for one copy per worker. |
+| Backup file | Deleted after the copy on SQL Server 2019 or later. Otherwise the next run overwrites it. |
+| Open sessions | A session left open on an old worker database is ended when the next run replaces it. |
+| Concurrent runs | A second run using the same test database stops with `another Mutineer run is using <base>`. |
+| Azure SQL Database | Unsupported: it cannot back up to a file. Use `--no-daemon`. |
 
 ### More than one database
 
@@ -279,4 +291,4 @@ When Bundler prints `RubyVersionMismatch`, Mutineer reports that cause instead o
 | SimpleCov without a recognised summary, or with `print_error_status = false` | The coverage gate's exit scores `error`. |
 | Clean run prints no summary | Warns once, then counts every exit 1 as a kill. |
 
-For Ruby ≥ 3.4 with Minitest and a supported database, use [the daemon backend](https://github.com/davidteren/mutineer/blob/main/docs/rails-setup.md#faster-parallel-safe-rails-the---daemon-backend) for safe parallelism. RSpec and other serial-only setups use `--rails` without `--daemon`.
+For Ruby ≥ 3.4 with Minitest or RSpec and a supported database, use [the daemon backend](https://github.com/davidteren/mutineer/blob/main/docs/rails-setup.md#faster-parallel-safe-rails-the---daemon-backend) for safe parallelism. Serial-only setups use `--rails` without `--daemon`.

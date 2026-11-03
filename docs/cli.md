@@ -17,7 +17,7 @@ Source of truth: `lib/mutineer/cli.rb` parses options; `lib/mutineer/config.rb` 
 | `--jobs N` | Parallel workers | One per CPU; `1` under `--rails` without `--daemon`, `--test-command`, or `--fail-fast` |
 | `--rails` | Boot `config/environment` once; reconnect Active Record per fork | Off |
 | `--boot FILE` | Require app entry point before forking | None |
-| `--[no-]daemon` | Boot once; separate worker test databases. Minitest only; requires `--rails` or `--boot` | Off |
+| `--[no-]daemon` | Boot once; separate worker test databases. Minitest or RSpec; requires `--rails` or `--boot` | Off |
 | `--strategy reload\|redefine` | Reload file or redefine mutated method | `reload`; `redefine` under `--rails` without `--daemon` |
 | `--test-command CMD` | Run tests in another Ruby subprocess; include `%{files}`. Forces one worker and sets `PARALLEL_WORKERS=1`; a wrapper can reset it | None |
 | `--timeout SECONDS` | Per-mutant limit, in-process | `10` |

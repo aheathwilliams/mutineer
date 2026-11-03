@@ -43,7 +43,7 @@ module Mutineer
   # Worker isolation: when the app is Rails, each fork is routed to its own
   # database via {RailsWorkerDb} BEFORE any test loads, so concurrent workers
   # cannot clobber each other's transactional fixtures. `worker` defaults to 0
-  # (serial). SQLite copies a file per slot. Postgres and MySQL use
+  # (serial). SQLite copies a file per slot. Postgres, MySQL and SQL Server use
   # `<base>-mutineer-<w>`, created once before the worker daemons start.
   #
   # Verdict mapping: child exit 0=survived (suite passed), 1=killed (suite
@@ -201,7 +201,7 @@ module Mutineer
         # Only a parallel worker daemon gets these names (DaemonBackend.boot_config).
         @shared_databases = Array(cfg["shared_databases"]).map(&:to_s)
         # Each SQLite slot is seeded once, on first use (not every mutant fork).
-        # Postgres and MySQL slots are copied at provision time, so this flag is unused there.
+        # Postgres, MySQL and SQL Server slots are copied at provision time, so this flag is unused there.
         @slot_ready = {}
         return unless @worker_db
 
@@ -494,17 +494,25 @@ module Mutineer
 
       # Load the covering test files and run them; 0 = all passed (survived),
       # 1 = a failure/error (killed), 2 = the first failure was an in-test
-      # database error (error, #296). Minitest only; rspec is not yet on this path.
-      # {MinitestIntegration.run} is the method the daemon's clean check uses,
-      # so each mutant fork gets the same seed and class list (#282). It loads
+      # database error (error, #296, #347) or, under RSpec, an error outside
+      # examples. Each runner is the one the daemon's clean check uses, so
+      # each mutant fork gets the same seed and class list (#282). Both load
       # only stdlib, so the daemon still needs no Prism. The fork requires
-      # nothing else first: the test files' `require "test_helper"` loads
-      # rails/test_help after the class list is reset, as in the clean check.
+      # nothing else first: the test files' `require "test_helper"` (or
+      # `require "rails_helper"`) loads the framework's Rails support after
+      # the run is reset, as in the clean check.
       def run_tests(tests)
-        raise "unsupported framework #{@framework.inspect}" unless @framework == "minitest"
-
-        require_relative "minitest_integration"
-        MinitestIntegration.run(tests.map { |t| File.expand_path(t) })
+        files = tests.map { |t| File.expand_path(t) }
+        case @framework
+        when "minitest"
+          require_relative "minitest_integration"
+          MinitestIntegration.run(files)
+        when "rspec"
+          require_relative "test_runners/rspec"
+          TestRunners::RSpec.run(files)
+        else
+          raise "unsupported framework #{@framework.inspect}"
+        end
       end
     end
   end

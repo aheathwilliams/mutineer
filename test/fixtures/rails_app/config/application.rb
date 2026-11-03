@@ -7,6 +7,9 @@ require "rails"
 # the point is to dogfood Mutineer's --rails boot, Zeitwerk autoloading, and
 # per-fork ActiveRecord/transactional-fixture handling, not to serve requests.
 require "active_record/railtie"
+# Not built into Rails, and the app has no Bundler.require, so DB=sqlserver
+# loads the adapter gem itself.
+require "activerecord-sqlserver-adapter" if ENV["DB"] == "sqlserver"
 
 module Dummy
   class Application < Rails::Application

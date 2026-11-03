@@ -12,7 +12,7 @@ Changes that still pass reveal possible test gaps. This is **mutation testing**.
 **Features**
 
 - **Minitest and RSpec.** Detected from test filenames; override with `--framework`.
-- **Rails support.** `--rails` boots once. With `--daemon`, each Minitest worker gets its own SQLite file, PostgreSQL, or MySQL 8 test database.
+- **Rails support.** `--rails` boots once. With `--daemon`, each Minitest or RSpec worker gets its own SQLite file, PostgreSQL, MySQL 8, or SQL Server test database.
 - **Focused tests.** Runs tests that reach each changed line, likely and fast tests first. Stops at the first failure by default.
 - **PR checks.** `--since origin/main` checks changed lines; `--baseline` gates new survivors, and score drops on full runs. When tests change, run a full scan (`--no-since`).
 - **CI and agents.** GitHub Action, versioned JSON, stable mutant ids, clear exit codes, and zero runtime gem dependencies.
@@ -30,35 +30,40 @@ In the Status column, `supported` means parallel runs work and `serial only` run
 | Ruby | Database | Framework | Parallelism | Status |
 | --- | --- | --- | --- | --- |
 | 3.4 or later | SQLite file | Minitest | supported with `--daemon` | supported |
-| 3.4 or later | SQLite file | RSpec | not supported | serial only |
+| 3.4 or later | SQLite file | RSpec | supported with `--daemon` | supported |
 | 3.4 or later | PostgreSQL | Minitest | supported with `--daemon` | supported |
-| 3.4 or later | PostgreSQL | RSpec | not supported | serial only |
+| 3.4 or later | PostgreSQL | RSpec | supported with `--daemon` | supported |
 | 3.4 or later | MySQL 8 | Minitest | supported with `--daemon` | supported |
-| 3.4 or later | MySQL 8 | RSpec | not supported | serial only |
+| 3.4 or later | MySQL 8 | RSpec | supported with `--daemon` | supported |
+| 3.4 or later | SQL Server 2019 or later | Minitest | supported with `--daemon` | supported |
+| 3.4 or later | SQL Server 2019 or later | RSpec | supported with `--daemon` | supported |
+| 3.4 or later | Azure SQL Database | Minitest | not supported | serial only |
 | 3.4 or later | MariaDB | Minitest | not tested | not tested |
 | 3.4 or later | MySQL 9 or later | Minitest | not tested | not tested |
 | 3.4 or later | SQLite in memory | Minitest | not supported | serial only |
 | 3.4 or later | SQLite in memory | RSpec | not supported | serial only |
 | 3.4 or later | more than one database | Minitest | one worker | serial only |
 | 3.4 or later | more than one database, Rails 7.1 or later, the extra ones in `shared_databases` | Minitest | supported with `--daemon` | supported, unless the test environment registers a pool for a shared database |
-| 3.4 or later | more than one database | RSpec | not supported | serial only |
+| 3.4 or later | more than one database | RSpec | one worker | serial only |
 
 This matrix is for a Rails app on Ruby 3.4 or later. A plain Ruby project
 with no database runs in parallel with either framework.
 `not supported` means `--daemon` cannot run that cell; `not tested` means no CI
 job runs it. SQLite file means a database file, not `:memory:`.
 
-- `--rails` without `--daemon` is serial on every row. `--daemon` is Minitest only.
+- `--rails` without `--daemon` is serial on every row. `--daemon` runs Minitest and RSpec.
 - MySQL older than 8.0 stops `--daemon`. MariaDB and MySQL 9 or later warn and run.
 - An app with more than one database runs one worker: `--daemon` isolates only the primary connection.
   On Rails 7.1 or later, list the databases your tests never use in `shared_databases`, and the workers
   run in parallel. CI tests that row on SQLite. See [More than one database](https://github.com/davidteren/mutineer/blob/main/docs/rails-setup.md#more-than-one-database).
 - Postgres worker databases are copied once at the start; MySQL 8 worker databases are created then and the rows copied.
+  SQL Server worker databases are restored from one backup at the start. CI tests SQL Server 2022.
+- Azure SQL Database cannot back up to a file, so `--daemon` cannot copy it. Use `--no-daemon`.
 - A test that commits rows outside a transaction leaves them in that worker's
   database, and the next mutant on that worker sees them. Rails parallel tests have the same limit.
-- RSpec: an example that fails with a database connection error scores
-  `killed`, not `errored`, so the score can read too high
-  ([#347](https://github.com/davidteren/mutineer/issues/347)).
+- RSpec: a run whose first failing example failed with a database connection
+  or lock error scores `errored`, as under Minitest. A `--matrix` row still
+  names that example as a kill ([#347](https://github.com/davidteren/mutineer/issues/347)).
 
 Mutineer sets `PARALLEL_WORKERS=1`, so a `parallelize` call in `test_helper.rb` starts no Rails workers during a mutant run.
 See [Rails parallel tests, Spring, Bootsnap, and Redis](https://github.com/davidteren/mutineer/blob/main/docs/rails-setup.md#rails-parallel-tests-spring-bootsnap-and-redis).
@@ -196,7 +201,7 @@ Full flags, defaults, and `.mutineer.yml` keys: [CLI reference](https://github.c
 | `--since REF` | Mutate only lines changed since git `REF`, such as `origin/main` |
 | `--baseline FILE` | Exit 1 for new survivors, or score drops on full runs, against a prior JSON report from a full run |
 | `--rails` | Boot `config/environment` once; serial without `--daemon` |
-| `--[no-]daemon` | Enable or disable daemon; isolated worker databases, Minitest only |
+| `--[no-]daemon` | Enable or disable daemon; isolated worker databases |
 | `--jobs N` | Worker count; default: one per CPU |
 | `--format human\|json\|html` | Report format; default: human |
 | `--dry-run` | List mutants without running tests |

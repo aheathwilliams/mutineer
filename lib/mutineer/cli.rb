@@ -428,9 +428,9 @@ module Mutineer
       # also re-detects framework from inferred tests when --framework was not set.
       autopair!(config) unless config.dry_run
 
-      # Daemon validation runs AFTER autopair so auto-inferred *_spec.rb tests
-      # cannot bypass the RSpec rejection (framework would still be minitest if we
-      # validated before discovery).
+      # Daemon validation runs AFTER autopair, so it sees the framework that
+      # auto-inferred *_spec.rb tests select (framework would still be minitest
+      # if we validated before discovery).
       validate_daemon!(config) if config.daemon
       warn_unused_coverage_from(config)
 
@@ -480,10 +480,10 @@ module Mutineer
     end
 
     # --daemon selects the persistent-daemon backend (boot once, fork per mutant,
-    # per-worker DB isolation on SQLite, Postgres, and MySQL). Usage errors exit 2:
-    # cannot combine with --test-command; requires --rails or --boot; minitest only;
-    # reload strategy only (redefine needs a shared VM surgical path the daemon
-    # does not ship).
+    # per-worker DB isolation on SQLite, Postgres, MySQL, and SQL Server). Usage errors exit 2:
+    # cannot combine with --test-command; requires --rails or --boot; reload
+    # strategy only (redefine needs a shared VM surgical path the daemon does
+    # not ship).
     #
     # @api private
     # @param config [Mutineer::Config] run configuration.
@@ -495,11 +495,6 @@ module Mutineer
       end
       unless config.rails || config.boot
         warn "mutineer: --daemon needs an app to boot; add --rails (or --boot FILE)"
-        exit 2
-      end
-      if config.framework == "rspec"
-        warn "mutineer: --daemon supports only --framework minitest " \
-             "(rspec is not implemented on the daemon path yet)"
         exit 2
       end
       warn_unused_settings(config, "--daemon", %i[timeout])

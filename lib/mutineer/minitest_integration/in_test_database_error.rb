@@ -117,9 +117,19 @@ module Mutineer
           error = first_failure if armed_here?
           return code unless code == 1 && error
 
+          report(error)
+          2
+        end
+
+        # Writes the one stderr line that names a database error. Also used by
+        # the RSpec runner (#347), which finds the error itself.
+        #
+        # @api private
+        # @param error [Exception] the database error.
+        # @return [void]
+        def report(error)
           STDERR.puts(line(error))
           STDERR.flush
-          2
         end
 
         # The database error a failure wraps. The first entry of a result is
@@ -138,7 +148,16 @@ module Mutineer
         def database_error(failure)
           return unless failure.is_a?(::Minitest::UnexpectedError)
 
-          error = failure.respond_to?(:error) ? failure.error : failure.exception
+          database_exception(failure.respond_to?(:error) ? failure.error : failure.exception)
+        end
+
+        # `error` when it is one of {NAMES} and not one of {CODE_ERROR_NAMES},
+        # else nil. Framework-free, so the RSpec runner shares it (#347).
+        #
+        # @api private
+        # @param error [Exception, nil] the error that ended a test.
+        # @return [Exception, nil]
+        def database_exception(error)
           return if loaded(CODE_ERROR_NAMES).any? { |klass| error.is_a?(klass) }
 
           error if loaded(NAMES).any? { |klass| error.is_a?(klass) }

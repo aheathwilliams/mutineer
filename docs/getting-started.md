@@ -108,7 +108,7 @@ Run a folder:
 RAILS_ENV=test bundle exec mutineer run app/models --rails
 ```
 
-For Minitest with one database (SQLite file, PostgreSQL, or MySQL 8), `--daemon` runs one worker per CPU. An app with more than one database runs one worker. MySQL older than 8.0 stops; MariaDB, MySQL 9 or later, and an unreadable version warn and continue:
+For Minitest or RSpec with one database (SQLite file, PostgreSQL, MySQL 8, or SQL Server), `--daemon` runs one worker per CPU. An app with more than one database runs one worker. MySQL older than 8.0 stops; MariaDB, MySQL 9 or later, and an unreadable version warn and continue:
 
 ```sh
 RAILS_ENV=test bundle exec mutineer run app/models --rails --daemon

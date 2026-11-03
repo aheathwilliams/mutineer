@@ -20,14 +20,18 @@ module Mutineer
   # worker's database BEFORE any test loads.
   #
   # SQLite copies the base file on a slot's first use ({after_fork} with
-  # `seed: true`). Postgres and MySQL copy once, before any worker daemon starts
-  # ({provision}). A later fork only connects. Both servers roll back a killed
+  # `seed: true`). Postgres, MySQL and SQL Server copy once, before any worker
+  # daemon starts
+  # ({provision}). A later fork only connects. The servers roll back a killed
   # fork's open transaction, so the SQLite re-seed after `error` or `timeout` is
   # skipped. Rows a test commits outside a transaction stay in the slot.
   #
   # MySQL has no template database. Each slot is created empty, the app schema
   # is loaded with ActiveRecord::Tasks::DatabaseTasks, and rows are copied
-  # table by table. `mysql2` and `trilogy` are accepted. Any other adapter
+  # table by table. `mysql2` and `trilogy` are accepted.
+  #
+  # SQL Server backs the test database up once and restores it under each
+  # slot name. Any other adapter
   # raises NotImplementedError rather than routing at a database that does not exist.
   module RailsWorkerDb
     # Postgres cuts an unquoted identifier at this many bytes.
@@ -52,6 +56,27 @@ module Mutineer
       ssl ssl_ca ssl_capath ssl_cert ssl_key ssl_cipher ssl_crl ssl_crlpath
       tls_ciphersuites tls_min_version tls_max_version
     ].freeze
+    # SQL Server rejects a database name longer than 128 characters. A byte
+    # limit of the same size stays inside it.
+    SQLSERVER_NAME_LIMIT = 128
+    # Rails keys from the app's SQL Server config, and the TinyTDS client
+    # option each becomes, for the maintenance session. `database` is not
+    # here: that session always uses `master`.
+    SQLSERVER_CLIENT_KEYS = {
+      host: :host,
+      port: :port,
+      username: :username,
+      password: :password,
+      dataserver: :dataserver,
+      tds_version: :tds_version,
+      azure: :azure,
+      contained: :contained,
+      login_timeout: :login_timeout,
+      timeout: :timeout,
+      encoding: :encoding
+    }.freeze
+    # SQL Server system databases, lower case, which a worker copy must never drop.
+    SQLSERVER_SYSTEM_DATABASES = %w[master model msdb tempdb].freeze
     # Infix that keeps a worker database off Rails' own `<base>-<n>` names.
     WORKER_NAME_MARK = "-mutineer-"
     # Database we connect to while the test database is a template. Advisory
@@ -158,6 +183,15 @@ module Mutineer
       worker_database_name(base, slot, MYSQL_NAME_LIMIT)
     end
 
+    # SQL Server worker database name. See {worker_database_name}.
+    #
+    # @param base [String] the test database name.
+    # @param slot [Integer] the worker slot index.
+    # @return [String] a name of at most {SQLSERVER_NAME_LIMIT} bytes.
+    def self.sqlserver_worker_database(base, slot)
+      worker_database_name(base, slot, SQLSERVER_NAME_LIMIT)
+    end
+
     # Leading characters of `text` that fit in `max_bytes`. Stops before a
     # character that would cross the limit, so a multibyte name stays valid
     # text. PostgreSQL and MySQL count identifier length in bytes.
@@ -217,7 +251,7 @@ module Mutineer
     end
 
     # Build the AR connection config for one worker from the app's current
-    # test config. SQLite, Postgres, and MySQL (mysql2 or trilogy) get a
+    # test config. SQLite, Postgres, MySQL (mysql2 or trilogy), and SQL Server get a
     # per-worker database name. Anything else raises.
     #
     # @param worker [Integer] the worker slot index.
@@ -254,12 +288,13 @@ module Mutineer
 
     # Pure config shaping (no AR): swap in the worker database name.
     # SQLite keeps {worker_database_path}. Postgres uses {postgres_worker_database}.
-    # MySQL (`mysql2` or `trilogy`) uses {mysql_worker_database}.
+    # MySQL (`mysql2` or `trilogy`) uses {mysql_worker_database}. SQL Server
+    # uses {sqlserver_worker_database}.
     #
     # @param config_hash [Hash] a connection config hash (symbol or string keys).
     # @param worker [Integer] the worker slot index.
     # @return [Hash] the per-worker config (symbol keys), database swapped.
-    # @raise [NotImplementedError] for an in-memory database, an empty name, or an adapter other than SQLite, Postgres, or MySQL.
+    # @raise [NotImplementedError] for an in-memory database, an empty name, or an adapter other than SQLite, Postgres, MySQL, or SQL Server.
     def self.per_worker_config(config_hash, worker)
       hash     = config_hash.transform_keys(&:to_sym)
       adapter  = hash[:adapter].to_s
@@ -279,6 +314,8 @@ module Mutineer
           postgres_worker_database(database, worker)
         elsif mysql_adapter?(adapter)
           mysql_worker_database(database, worker)
+        elsif sqlserver_adapter?(adapter)
+          sqlserver_worker_database(database, worker)
         else
           raise NotImplementedError,
                 "worker-DB isolation does not support adapter #{adapter.inspect} yet."
@@ -289,12 +326,13 @@ module Mutineer
     # Create each worker database before any worker daemon starts.
     # SQLite is a no-op: the file is copied on first use. Postgres drops and
     # recreates each exact slot name from the test database. MySQL creates each
-    # slot, loads the schema, and copies rows. The caller must be the only
+    # slot, loads the schema, and copies rows. SQL Server restores each slot
+    # from one backup. The caller must be the only
     # daemon connected to that test database.
     #
     # @param slots [Integer] how many worker slots to create (0..slots-1).
     # @return [void]
-    # @raise [NotImplementedError] for an adapter other than SQLite, Postgres, or MySQL.
+    # @raise [NotImplementedError] for an adapter other than SQLite, Postgres, MySQL, or SQL Server.
     # @raise [RuntimeError] when the copy cannot be made, or another run holds the lock.
     def self.provision(slots)
       return unless available?
@@ -309,6 +347,10 @@ module Mutineer
       end
       if mysql_adapter?(current_adapter)
         provision_mysql(count)
+        return
+      end
+      if sqlserver_adapter?(current_adapter)
+        provision_sqlserver(count)
         return
       end
 
@@ -330,6 +372,10 @@ module Mutineer
         prepare_mysql_worker!
         return
       end
+      if sqlserver_adapter?(current_adapter)
+        prepare_sqlserver_worker!
+        return
+      end
       return unless postgres_adapter?(current_adapter)
 
       hash = current_config_hash
@@ -344,7 +390,8 @@ module Mutineer
       disconnect_app!
     end
 
-    # Point this process at one worker database. Postgres and MySQL only connect.
+    # Point this process at one worker database. Postgres, MySQL and SQL Server
+    # only connect.
     # The slot was copied at {provision}.
     #
     # @param slot [Integer] the worker slot index.
@@ -401,7 +448,7 @@ module Mutineer
       return unless available?
 
       forget_lock_connection_after_fork!
-      if postgres_adapter?(current_adapter) || mysql_adapter?(current_adapter)
+      if server_adapter?(current_adapter)
         connect(worker)
         verify_connection!
         return
@@ -542,7 +589,9 @@ module Mutineer
     # such as `schema_sqlite.rb` lives in `db/`), or the `SCHEMA` variable.
     # nil when the file does not exist, when the config sets `schema_dump: false`,
     # or when the app uses `structure.sql` (a worker cannot `load` SQL). With nil
-    # the worker keeps its copy of the test database as it is.
+    # the worker keeps its copy of the test database as it is. An Active Record
+    # app without Rails that never set `DatabaseTasks.db_dir` has no schema file
+    # either: Active Record looks the folder up on `Rails`, which is not loaded.
     #
     # @return [String, nil] absolute path of an existing file, or nil.
     def self.ruby_schema_path
@@ -550,7 +599,13 @@ module Mutineer
       format = schema_format_for(db_config)
       return unless format == :ruby
 
-      path = ActiveRecord::Tasks::DatabaseTasks.schema_dump_path(db_config, format)
+      path = begin
+        ActiveRecord::Tasks::DatabaseTasks.schema_dump_path(db_config, format)
+      rescue NameError => e
+        raise unless e.name == :Rails
+
+        nil
+      end
       # Expanded so `load` never searches $LOAD_PATH for a relative SCHEMA value.
       path &&= File.expand_path(path)
       path if path && File.exist?(path)
@@ -613,6 +668,23 @@ module Mutineer
     # @return [Boolean]
     def self.mysql_adapter?(adapter)
       adapter == "mysql2" || adapter == "trilogy"
+    end
+
+    # True for activerecord-sqlserver-adapter.
+    #
+    # @param adapter [String]
+    # @return [Boolean]
+    def self.sqlserver_adapter?(adapter)
+      adapter == "sqlserver"
+    end
+
+    # True for an adapter whose worker databases {provision} creates before
+    # the workers start, so a fork only connects.
+    #
+    # @param adapter [String]
+    # @return [Boolean]
+    def self.server_adapter?(adapter)
+      postgres_adapter?(adapter) || mysql_adapter?(adapter) || sqlserver_adapter?(adapter)
     end
 
     # Classify a MySQL `SELECT VERSION()` text against the support matrix.
@@ -893,7 +965,7 @@ module Mutineer
     # so the server ends the parent's session and every lock it holds.
     # These are the steps ActiveRecord's adapters take in `discard!`.
     #
-    # @param conn [Mysql2::Client, Trilogy, PG::Connection]
+    # @param conn [Mysql2::Client, Trilogy, PG::Connection, TinyTds::Client]
     # @return [void]
     def self.detach_inherited_connection(conn)
       if conn.respond_to?(:automatic_close=)
@@ -903,6 +975,8 @@ module Mutineer
       elsif conn.respond_to?(:socket_io)
         conn.socket_io.reopen(IO::NULL) # pg: Terminate goes to /dev/null
       end
+      # TinyTDS needs nothing: a child that frees or closes its copy leaves the
+      # parent's session and application locks in place.
     end
 
     # Quote a database name for a Postgres identifier. `CREATE DATABASE` cannot
@@ -1737,6 +1811,280 @@ module Mutineer
       raise ArgumentError, "database name contains a null" if name.include?("\0")
 
       "`#{name.to_s.gsub('`', '``')}`"
+    end
+
+    # Create SQL Server slots `0...count` as exact copies of the test database:
+    # one `COPY_ONLY` backup, then one restore per slot under the slot's name,
+    # with its own data and log files beside the originals. A restore keeps
+    # the schema, rows, identity seeds, keys and triggers, so nothing is
+    # copied table by table. The app's login needs permission to back up the
+    # test database and to create databases (`dbcreator`).
+    #
+    # Holds the exclusive application lock for the copy, then a shared one
+    # for the rest of this process so a second run cannot drop the slots.
+    # SQL Server never turns a held exclusive lock into a shared one, so the
+    # handoff releases first, as Postgres does.
+    #
+    # @param count [Integer]
+    # @return [void]
+    # @raise [RuntimeError] when the copy cannot be made, or another run holds the lock.
+    def self.provision_sqlserver(count)
+      hash = current_config_hash
+      base = hash[:database].to_s
+      conn = open_sqlserver_connection(hash, base)
+      unless sqlserver_lock(conn, base, shared: false)
+        conn.close
+        raise "another Mutineer run is using #{base}"
+      end
+
+      begin
+        disconnect_app!
+        files = sqlserver_database_files(conn, base)
+        backup = sqlserver_backup_path(conn, base)
+        begin
+          sqlserver_exec(conn, "BACKUP DATABASE #{quote_sqlserver_ident(base)} " \
+                               "TO DISK = #{sqlserver_string(backup)} WITH COPY_ONLY, INIT, FORMAT")
+          count.times do |slot|
+            restore_sqlserver_slot(conn, base, slot, backup, files)
+          end
+        ensure
+          delete_sqlserver_backup(conn, backup) if backup
+        end
+        sqlserver_unlock(conn, base)
+        raise "another Mutineer run is using #{base}" unless sqlserver_lock(conn, base, shared: true)
+      rescue StandardError => e
+        conn.close
+        raise provision_wrapped?(e) ? e : provision_failure(base, base, e.message)
+      end
+
+      @lock_connection = conn
+      warn "[mutineer] provisioned #{count} sqlserver worker database(s) from #{base}"
+    end
+
+    # Take the shared application lock and drop this process's app connection.
+    #
+    # @return [void]
+    # @raise [RuntimeError] when another run holds the exclusive lock.
+    def self.prepare_sqlserver_worker!
+      hash = current_config_hash
+      base = hash[:database].to_s
+      conn = open_sqlserver_connection(hash, base)
+      unless sqlserver_lock(conn, base, shared: true)
+        conn.close
+        raise "another Mutineer run is using #{base}"
+      end
+
+      @lock_connection = conn
+      disconnect_app!
+    end
+
+    # Open a session on `master` with the app's SQL Server credentials, through
+    # the TinyTDS client the app already loaded. The gem does not depend on it.
+    # Application locks belong to a database, so every run takes them on
+    # `master`, never on the test database or a slot.
+    #
+    # @param config_hash [Hash]
+    # @param base [String] test database name, named in the error if this fails.
+    # @return [TinyTds::Client]
+    def self.open_sqlserver_connection(config_hash, base)
+      unless defined?(TinyTds::Client)
+        raise "could not provision #{base}: the app's tiny_tds client is not loaded"
+      end
+
+      hash = config_hash.transform_keys(&:to_sym)
+      opts = SQLSERVER_CLIENT_KEYS.each_with_object({}) do |(rails_key, client_key), out|
+        value = hash[rails_key]
+        out[client_key] = value unless blank_option?(value)
+      end
+      TinyTds::Client.new(**opts, database: "master", appname: "mutineer")
+    rescue StandardError => e
+      raise e if e.message.start_with?("could not provision")
+
+      raise "could not provision #{base}: #{e.message}"
+    end
+
+    # Take this run's application lock for `base` without waiting.
+    #
+    # @param conn [TinyTds::Client]
+    # @param base [String]
+    # @param shared [Boolean] shared lock when true, exclusive when false.
+    # @return [Boolean] true when granted.
+    def self.sqlserver_lock(conn, base, shared:)
+      mode = shared ? "Shared" : "Exclusive"
+      sql = "DECLARE @r int; EXEC @r = sp_getapplock @Resource = #{sqlserver_string(sqlserver_lock_resource(base))}, " \
+            "@LockMode = '#{mode}', @LockOwner = 'Session', @LockTimeout = 0; SELECT @r AS r"
+      sqlserver_rows(conn, sql).last.fetch("r") >= 0
+    end
+
+    # Release this session's application lock for `base`.
+    #
+    # @param conn [TinyTds::Client]
+    # @param base [String]
+    # @return [void]
+    def self.sqlserver_unlock(conn, base)
+      sqlserver_exec(conn, "EXEC sp_releaseapplock @Resource = #{sqlserver_string(sqlserver_lock_resource(base))}, " \
+                           "@LockOwner = 'Session'")
+    end
+
+    # Application lock name for `base`. A digest keeps it inside the
+    # 255-character limit for any database name.
+    #
+    # @param base [String]
+    # @return [String]
+    def self.sqlserver_lock_resource(base)
+      "mutineer-run:#{Digest::SHA256.hexdigest(base)}"
+    end
+
+    # The test database's files, in file order: each one's logical name and
+    # path on the server.
+    #
+    # @param conn [TinyTds::Client]
+    # @param base [String]
+    # @return [Array<Hash{Symbol => String}>]
+    # @raise [RuntimeError] when the server has no database named `base`.
+    def self.sqlserver_database_files(conn, base)
+      rows = sqlserver_rows(conn, "SELECT name, physical_name FROM sys.master_files " \
+                                  "WHERE database_id = DB_ID(#{sqlserver_string(base)}) ORDER BY file_id")
+      raise "could not provision #{base}: the server has no database with that name" if rows.empty?
+
+      rows.map { |row| { logical: row.fetch("name"), physical: row.fetch("physical_name") } }
+    end
+
+    # Where the server writes this run's backup: its default backup folder,
+    # one file per test database, which the next run overwrites.
+    #
+    # @param conn [TinyTds::Client]
+    # @param base [String]
+    # @return [String] a path on the server, not on this machine.
+    def self.sqlserver_backup_path(conn, base)
+      dir = sqlserver_rows(conn, "SELECT CAST(SERVERPROPERTY('InstanceDefaultBackupPath') AS nvarchar(4000)) AS dir")
+            .first&.fetch("dir", nil).to_s
+      raise "could not provision #{base}: the server reports no default backup folder" if dir.empty?
+
+      sep = sqlserver_path_separator(dir)
+      "#{dir.chomp(sep)}#{sep}mutineer-#{Digest::SHA256.hexdigest(base)[0, 16]}.bak"
+    end
+
+    # Replace slot `slot` with a restore of `backup`. Ends other sessions on
+    # the slot only. A session on `base` is left alone.
+    #
+    # @param conn [TinyTds::Client]
+    # @param base [String] test database name.
+    # @param slot [Integer] the worker slot index.
+    # @param backup [String] the backup file on the server.
+    # @param files [Array<Hash{Symbol => String}>] from {sqlserver_database_files}.
+    # @return [void]
+    def self.restore_sqlserver_slot(conn, base, slot, backup, files)
+      name = sqlserver_worker_database(base, slot)
+      raise "refusing to drop #{name}" unless sqlserver_worker_database_name?(base, name)
+
+      quoted = quote_sqlserver_ident(name)
+      if sqlserver_rows(conn, "SELECT DB_ID(#{sqlserver_string(name)}) AS id").first&.fetch("id", nil)
+        sqlserver_exec(conn, "ALTER DATABASE #{quoted} SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
+        sqlserver_exec(conn, "DROP DATABASE #{quoted}")
+      end
+      moves = files.each_with_index.map do |file, i|
+        path = sqlserver_slot_file(file[:physical], base, slot, i)
+        "MOVE #{sqlserver_string(file[:logical])} TO #{sqlserver_string(path)}"
+      end
+      sqlserver_exec(conn, "RESTORE DATABASE #{quoted} FROM DISK = #{sqlserver_string(backup)} " \
+                           "WITH #{moves.join(', ')}, RECOVERY")
+    rescue StandardError => e
+      raise e if provision_wrapped?(e)
+
+      raise provision_failure(base, name, e.message)
+    end
+
+    # Path for one restored file of a slot: the folder and extension of the
+    # original file, under a name built from a digest of `base`, so any
+    # database name gives a safe file name.
+    #
+    # @param physical [String] the original file's path on the server.
+    # @param base [String] test database name.
+    # @param slot [Integer] the worker slot index.
+    # @param index [Integer] the file's position in {sqlserver_database_files}.
+    # @return [String]
+    def self.sqlserver_slot_file(physical, base, slot, index)
+      dir = physical[%r{\A.*[\\/]}].to_s
+      ext = physical[/\.[^.\\\/]*\z/].to_s
+      "#{dir}mutineer-#{Digest::SHA256.hexdigest(base)[0, 16]}-#{slot}-#{index}#{ext}"
+    end
+
+    # `\` for a Windows path on the server, else `/`.
+    #
+    # @param path [String]
+    # @return [String]
+    def self.sqlserver_path_separator(path)
+      path.include?("\\") && !path.include?("/") ? "\\" : "/"
+    end
+
+    # Delete this run's backup file. `xp_delete_files` exists from SQL Server
+    # 2019. On an older server, or without permission, the file stays, and the
+    # next run overwrites it.
+    #
+    # @param conn [TinyTds::Client]
+    # @param backup [String]
+    # @return [void]
+    def self.delete_sqlserver_backup(conn, backup)
+      sqlserver_exec(conn, "EXEC master.sys.xp_delete_files #{sqlserver_string(backup)}")
+    rescue StandardError
+      nil
+    end
+
+    # True when `name` is a database this tool may drop: the exact name
+    # {sqlserver_worker_database} builds for `base` and the slot written at
+    # the end of `name`. The source database and the system databases are refused.
+    #
+    # @param base [String] the test database name.
+    # @param name [String] a database name we might drop.
+    # @return [Boolean]
+    def self.sqlserver_worker_database_name?(base, name)
+      return false if base.nil? || name.nil?
+
+      text = name.to_s
+      return false if text.empty? || text == base.to_s
+      return false if SQLSERVER_SYSTEM_DATABASES.include?(text.downcase)
+
+      slot = text[/#{Regexp.escape(WORKER_NAME_MARK)}(\d+)\z/, 1]
+      slot ? sqlserver_worker_database(base.to_s, Integer(slot, 10)) == text : false
+    end
+
+    # Run a statement that returns no rows.
+    #
+    # @param conn [TinyTds::Client]
+    # @param sql [String]
+    # @return [void]
+    def self.sqlserver_exec(conn, sql)
+      conn.execute(sql).do
+      nil
+    end
+
+    # Rows of a query, read in full so the session is free for the next one.
+    #
+    # @param conn [TinyTds::Client]
+    # @param sql [String]
+    # @return [Array<Hash{String => Object}>]
+    def self.sqlserver_rows(conn, sql)
+      conn.execute(sql).each.to_a
+    end
+
+    # Quote a database name for T-SQL. `CREATE`, `BACKUP` and `RESTORE` cannot
+    # take a bound parameter for the name.
+    #
+    # @param name [String]
+    # @return [String]
+    def self.quote_sqlserver_ident(name)
+      raise ArgumentError, "database name is empty" if name.nil? || name.empty?
+
+      "[#{name.gsub(']', ']]')}]"
+    end
+
+    # A T-SQL Unicode string literal.
+    #
+    # @param text [String]
+    # @return [String]
+    def self.sqlserver_string(text)
+      "N'#{text.to_s.gsub("'", "''")}'"
     end
 
     # True when `error` is already a provision failure this module raised.

@@ -2,6 +2,7 @@
 
 require "stringio"
 require_relative "../kill_channel"
+require_relative "../minitest_integration/in_test_database_error"
 
 module Mutineer
   # Raised when the target project asks for a framework whose gem isn't present.
@@ -63,14 +64,33 @@ module Mutineer
       end
 
       # The exit status of a failed run: 2 when no example failed and RSpec
-      # recorded an error outside examples, else 1.
+      # recorded an error outside examples, 2 when the first failed example
+      # failed with an Active Record connection or lock error (#347, the
+      # RSpec side of {MinitestIntegration::InTestDatabaseError}), else 1.
       #
       # @api private
       # @return [Integer] 1 or 2.
       def self.failure_code
         world = ::RSpec.world
+        failed = ::RSpec.configuration.reporter.failed_examples
         outside_examples = world.respond_to?(:non_example_failure) && world.non_example_failure
-        outside_examples && ::RSpec.configuration.reporter.failed_examples.empty? ? 2 : 1
+        return 2 if outside_examples && failed.empty?
+        return 1 unless (error = database_error(failed.first))
+
+        MinitestIntegration::InTestDatabaseError.report(error)
+        2
+      end
+
+      # The database error that ended `example`, or nil. A fault reading it
+      # counts as an ordinary failure, so it never turns a kill into an error.
+      #
+      # @api private
+      # @param example [RSpec::Core::Example, nil] the first failed example.
+      # @return [Exception, nil]
+      def self.database_error(example)
+        MinitestIntegration::InTestDatabaseError.database_exception(example&.exception)
+      rescue StandardError
+        nil
       end
 
       # Runs the top-level example groups in the order of `spec_files` (#203),
