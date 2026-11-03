@@ -500,16 +500,18 @@ module Mutineer
       # only stdlib, so the daemon still needs no Prism. The fork requires
       # nothing else first: the test files' `require "test_helper"` (or
       # `require "rails_helper"`) loads the framework's Rails support after
-      # the run is reset, as in the clean check.
+      # the run is reset, as in the clean check. One failing test already
+      # kills the mutant, so the run stops there, as in-process (--matrix,
+      # which needs every test, is refused with --daemon).
       def run_tests(tests)
         files = tests.map { |t| File.expand_path(t) }
         case @framework
         when "minitest"
           require_relative "minitest_integration"
-          MinitestIntegration.run(files)
+          MinitestIntegration.run(files, stop_at_first_failure: true)
         when "rspec"
           require_relative "test_runners/rspec"
-          TestRunners::RSpec.run(files)
+          TestRunners::RSpec.run(files, stop_at_first_failure: true)
         else
           raise "unsupported framework #{@framework.inspect}"
         end

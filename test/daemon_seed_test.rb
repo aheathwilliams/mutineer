@@ -28,6 +28,25 @@ class DaemonSeedTest < Minitest::Test
       assert_equal Mutineer::MinitestIntegration::PINNED_SEED.to_s, File.read(marker)
     end
   end
+
+  # One failing test kills the mutant, so the fork skips the tests after it.
+  def test_daemon_mutant_run_stops_at_first_failure
+    Dir.mktmpdir("mutineer-daemon-stop") do |dir|
+      marker = File.join(dir, "marker")
+      pid = fork do
+        Process.setpgid(0, 0)
+        Mutineer::ChildStdout.silence
+        ENV["MUTINEER_FIXTURE_FIRST"] = "fail"
+        ENV["MUTINEER_FIXTURE_MARKER"] = marker
+        Mutineer::DaemonServer.instance_variable_set(:@framework, "minitest")
+        exit!(Mutineer::DaemonServer.send(:run_tests, [File.expand_path("fixtures/stop_at_first_failure_test.rb", __dir__)]))
+      rescue Exception # rubocop:disable Lint/RescueException
+        exit!(3)
+      end
+      assert_equal 1, wait_child(pid).exitstatus
+      refute_path_exists marker
+    end
+  end
 end
 
 # The daemon runs RSpec through the runner the in-process path uses.
@@ -54,6 +73,24 @@ class DaemonRSpecRunTest < Minitest::Test
 
   def test_spec_that_fails_to_load_is_an_error
     assert_equal 2, daemon_run("load_error_spec.rb")
+  end
+
+  # One failing example kills the mutant, so the fork skips the examples after it.
+  def test_failing_example_stops_the_run
+    Dir.mktmpdir("mutineer-daemon-rspec-stop") do |dir|
+      marker = File.join(dir, "marker")
+      ENV["MUTINEER_FIXTURE_FIRST"] = "fail"
+      ENV["MUTINEER_FIXTURE_MARKER"] = marker
+      assert_equal 1, daemon_run("stop_at_first_failure_spec.rb")
+      refute_path_exists marker
+
+      ENV["MUTINEER_FIXTURE_FIRST"] = "pass"
+      assert_equal 0, daemon_run("stop_at_first_failure_spec.rb")
+      assert_path_exists marker
+    ensure
+      ENV.delete("MUTINEER_FIXTURE_FIRST")
+      ENV.delete("MUTINEER_FIXTURE_MARKER")
+    end
   end
 
   def test_unknown_framework_raises
