@@ -12,7 +12,7 @@ Changes that still pass reveal possible test gaps. This is **mutation testing**.
 **Features**
 
 - **Minitest and RSpec.** Detected from test filenames; override with `--framework`.
-- **Rails support.** `--rails` boots once. With `--daemon`, each Minitest worker gets its own SQLite file, PostgreSQL, or MySQL 8 test database.
+- **Rails support.** `--rails` boots once. With `--daemon`, each Minitest or RSpec worker gets its own SQLite file, PostgreSQL, MySQL 8, or SQL Server test database.
 - **Focused tests.** Runs tests that reach each changed line, likely and fast tests first. Stops at the first failure by default.
 - **PR checks.** `--since origin/main` checks changed lines; `--baseline` gates new survivors, and score drops on full runs. When tests change, run a full scan (`--no-since`).
 - **CI and agents.** GitHub Action, versioned JSON, stable mutant ids, clear exit codes, and zero runtime gem dependencies.
@@ -35,6 +35,9 @@ In the Status column, `supported` means parallel runs work and `serial only` run
 | 3.4 or later | PostgreSQL | RSpec | supported with `--daemon` | supported |
 | 3.4 or later | MySQL 8 | Minitest | supported with `--daemon` | supported |
 | 3.4 or later | MySQL 8 | RSpec | supported with `--daemon` | supported |
+| 3.4 or later | SQL Server 2019 or later | Minitest | supported with `--daemon` | supported |
+| 3.4 or later | SQL Server 2019 or later | RSpec | supported with `--daemon` | supported |
+| 3.4 or later | Azure SQL Database | Minitest | not supported | serial only |
 | 3.4 or later | MariaDB | Minitest | not tested | not tested |
 | 3.4 or later | MySQL 9 or later | Minitest | not tested | not tested |
 | 3.4 or later | SQLite in memory | Minitest | not supported | serial only |
@@ -54,6 +57,8 @@ job runs it. SQLite file means a database file, not `:memory:`.
   On Rails 7.1 or later, list the databases your tests never use in `shared_databases`, and the workers
   run in parallel. CI tests that row on SQLite. See [More than one database](https://github.com/davidteren/mutineer/blob/main/docs/rails-setup.md#more-than-one-database).
 - Postgres worker databases are copied once at the start; MySQL 8 worker databases are created then and the rows copied.
+  SQL Server worker databases are restored from one backup at the start. CI tests SQL Server 2022.
+- Azure SQL Database cannot back up to a file, so `--daemon` cannot copy it. Use `--no-daemon`.
 - A test that commits rows outside a transaction leaves them in that worker's
   database, and the next mutant on that worker sees them. Rails parallel tests have the same limit.
 - RSpec: a run whose first failing example failed with a database connection

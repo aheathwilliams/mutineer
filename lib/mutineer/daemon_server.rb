@@ -43,7 +43,7 @@ module Mutineer
   # Worker isolation: when the app is Rails, each fork is routed to its own
   # database via {RailsWorkerDb} BEFORE any test loads, so concurrent workers
   # cannot clobber each other's transactional fixtures. `worker` defaults to 0
-  # (serial). SQLite copies a file per slot. Postgres and MySQL use
+  # (serial). SQLite copies a file per slot. Postgres, MySQL and SQL Server use
   # `<base>-mutineer-<w>`, created once before the worker daemons start.
   #
   # Verdict mapping: child exit 0=survived (suite passed), 1=killed (suite
@@ -201,7 +201,7 @@ module Mutineer
         # Only a parallel worker daemon gets these names (DaemonBackend.boot_config).
         @shared_databases = Array(cfg["shared_databases"]).map(&:to_s)
         # Each SQLite slot is seeded once, on first use (not every mutant fork).
-        # Postgres and MySQL slots are copied at provision time, so this flag is unused there.
+        # Postgres, MySQL and SQL Server slots are copied at provision time, so this flag is unused there.
         @slot_ready = {}
         return unless @worker_db
 

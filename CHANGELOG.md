@@ -14,6 +14,14 @@ All notable changes to this project are documented here. The format is based on
   MySQL 8 now runs mutants in parallel. The fixture app gained a `spec/`
   suite, and `test/runner_daemon_rspec_test.rb` checks that `--jobs 2` gives
   the verdicts of `--jobs 1` and of the Minitest twin suite.
+- **SQL Server worker databases on `--rails --daemon`.** With
+  `activerecord-sqlserver-adapter`, Mutineer backs the test database up once
+  and restores it as `<base>-mutineer-<N>` for each worker, so Minitest and
+  RSpec run mutants in parallel on SQL Server 2019 or later. The restore keeps
+  identity seeds, keys, and triggers. An application lock stops a second run
+  on the same test database. The login needs `dbcreator` and BACKUP
+  permission. Azure SQL Database is not supported. A new `rails-sqlserver` CI
+  job runs the daemon tests on SQL Server 2022.
 
 ### Fixed
 

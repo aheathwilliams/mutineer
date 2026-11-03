@@ -177,6 +177,54 @@ jobs:
       - name: Daemon integration tests on MySQL 8
         run: bundle exec rake test:daemon
 
+  rails-sqlserver:
+    name: rails daemon sql server 2022 (ruby 3.4)
+    runs-on: ubuntu-latest
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: Mutineer_Test1
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P Mutineer_Test1 -Q 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DB: sqlserver
+      BUNDLE_WITH: sqlserver
+      MSSQL_HOST: 127.0.0.1
+      MSSQL_PORT: "1433"
+      MSSQL_USER: sa
+      MSSQL_SA_PASSWORD: Mutineer_Test1
+      MSSQL_DATABASE: mutineer_rails_test
+      RAILS_ENV: test
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install FreeTDS
+        run: sudo apt-get update && sudo apt-get install -y freetds-dev
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+          working-directory: test/fixtures/rails_app
+      - name: Install the fixture bundle with tiny_tds
+        working-directory: test/fixtures/rails_app
+        run: bundle install
+      - name: Create the test database
+        working-directory: test/fixtures/rails_app
+        run: >-
+          bundle exec ruby -rtiny_tds -e 'TinyTds::Client.new(host: "127.0.0.1", port: 1433, username: "sa",
+          password: ENV.fetch("MSSQL_SA_PASSWORD"), database: "master")
+          .execute("IF DB_ID(N\x27mutineer_rails_test\x27) IS NULL CREATE DATABASE [mutineer_rails_test]").do'
+      - name: Install the gem bundle
+        run: bundle install
+      - name: Daemon integration tests on SQL Server 2022
+        run: bundle exec rake test:daemon
+
   site:
     name: website browser tests
     runs-on: ubuntu-latest

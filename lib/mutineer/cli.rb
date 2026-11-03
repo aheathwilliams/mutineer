@@ -480,7 +480,7 @@ module Mutineer
     end
 
     # --daemon selects the persistent-daemon backend (boot once, fork per mutant,
-    # per-worker DB isolation on SQLite, Postgres, and MySQL). Usage errors exit 2:
+    # per-worker DB isolation on SQLite, Postgres, MySQL, and SQL Server). Usage errors exit 2:
     # cannot combine with --test-command; requires --rails or --boot; reload
     # strategy only (redefine needs a shared VM surgical path the daemon does
     # not ship).

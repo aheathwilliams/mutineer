@@ -138,6 +138,61 @@ class RailsWorkerDbTest < Minitest::Test
     end
   end
 
+  def test_sqlserver_uses_sqlserver_worker_names
+    cfg = Mutineer::RailsWorkerDb.per_worker_config({ adapter: "sqlserver", database: "app_test" }, 4)
+    assert_equal "app_test-mutineer-4", cfg[:database]
+    assert_equal "sqlserver", cfg[:adapter]
+  end
+
+  def test_long_sqlserver_names_stay_within_128_characters_and_differ_by_slot
+    base = "a" * 140
+    one = Mutineer::RailsWorkerDb.sqlserver_worker_database(base, 1)
+    two = Mutineer::RailsWorkerDb.sqlserver_worker_database(base, 2)
+    assert_operator one.length, :<=, 128
+    assert_operator two.length, :<=, 128
+    refute_equal one, two
+    assert Mutineer::RailsWorkerDb.sqlserver_worker_database_name?(base, one)
+  end
+
+  def test_sqlserver_worker_name_check_refuses_the_base_system_and_foreign_names
+    check = Mutineer::RailsWorkerDb.method(:sqlserver_worker_database_name?)
+    assert check.call("myapp_test", "myapp_test-mutineer-0")
+    ["myapp_test", "master", "MSDB", "tempdb", "other_app-mutineer-0", "myapp_test-mutineer-x", ""].each do |name|
+      refute check.call("myapp_test", name), name
+    end
+    refute check.call("myapp_test", nil)
+  end
+
+  def test_sqlserver_quoting_doubles_the_closing_characters
+    assert_equal "[a]]b]", Mutineer::RailsWorkerDb.quote_sqlserver_ident("a]b")
+    assert_equal "N'it''s'", Mutineer::RailsWorkerDb.sqlserver_string("it's")
+    assert_raises(ArgumentError) { Mutineer::RailsWorkerDb.quote_sqlserver_ident("") }
+  end
+
+  def test_sqlserver_lock_resource_fits_the_applock_limit
+    resource = Mutineer::RailsWorkerDb.sqlserver_lock_resource("x" * 500)
+    assert_operator resource.length, :<=, 255
+    refute_equal resource, Mutineer::RailsWorkerDb.sqlserver_lock_resource("y")
+  end
+
+  def test_sqlserver_slot_files_keep_the_folder_and_extension
+    linux = Mutineer::RailsWorkerDb.sqlserver_slot_file("/var/opt/mssql/data/app.mdf", "app", 2, 0)
+    assert_match(%r{\A/var/opt/mssql/data/mutineer-\h{16}-2-0\.mdf\z}, linux)
+    windows = Mutineer::RailsWorkerDb.sqlserver_slot_file('D:\SQL\Data\app_log.ldf', "app", 0, 1)
+    assert_match(/\AD:\\SQL\\Data\\mutineer-\h{16}-0-1\.ldf\z/, windows)
+  end
+
+  def test_sqlserver_backup_path_uses_the_server_separator
+    { "/var/opt/mssql/data" => %r{\A/var/opt/mssql/data/mutineer-\h{16}\.bak\z},
+      'C:\Backup\\' => /\AC:\\Backup\\mutineer-\h{16}\.bak\z/ }.each do |dir, pattern|
+      conn = Object.new
+      result = Object.new
+      result.define_singleton_method(:each) { [{ "dir" => dir }] }
+      conn.define_singleton_method(:execute) { |_sql| result }
+      assert_match pattern, Mutineer::RailsWorkerDb.sqlserver_backup_path(conn, "app")
+    end
+  end
+
   def test_recreate_drops_only_the_canonical_worker_name
     calls = []
     conn = Object.new
