@@ -25,6 +25,12 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **`--rails --daemon` boots an Active Record app without Rails.** A gem that
+  connects with `establish_connection` and boots through `--boot FILE` failed
+  with `uninitialized constant Rails`: Active Record looks the schema folder
+  up on `Rails` unless `DatabaseTasks.db_dir` is set. That app now has no
+  schema file to load, and its workers get their own databases as a Rails
+  app's do.
 - **An RSpec database error scores `errored`, not `killed` (#347).** When the
   first failing example failed with an Active Record connection or lock error,
   the run now has no verdict, as under Minitest (#296), and stderr names the

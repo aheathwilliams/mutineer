@@ -429,6 +429,19 @@ class RailsWorkerDbTest < Minitest::Test
     end
   end
 
+  # An Active Record app without Rails: Active Record looks `db_dir` up on
+  # `Rails`, which is not loaded. That app has no schema file to load.
+  def test_ruby_schema_path_is_nil_for_active_record_without_rails
+    no_rails = -> { raise NameError.new("uninitialized constant primary::Rails", :Rails) }
+    with_schema_config(dump: no_rails) do
+      assert_nil Mutineer::RailsWorkerDb.ruby_schema_path
+    end
+    other = -> { raise NameError.new("uninitialized constant Missing", :Missing) }
+    with_schema_config(dump: other) do
+      assert_raises(NameError) { Mutineer::RailsWorkerDb.ruby_schema_path }
+    end
+  end
+
   # Yields the real path of a temp app root with a db/ folder, as the cwd.
   def in_app_root(&block)
     Dir.mktmpdir do |dir|
@@ -454,7 +467,7 @@ class RailsWorkerDbTest < Minitest::Test
       raise "wrong db config" unless config.equal?(db_config)
 
       asked << format
-      dump
+      dump.respond_to?(:call) ? dump.call : dump
     end
     active_record = Module.new
     active_record.define_singleton_method(:schema_format) { global }

@@ -589,7 +589,9 @@ module Mutineer
     # such as `schema_sqlite.rb` lives in `db/`), or the `SCHEMA` variable.
     # nil when the file does not exist, when the config sets `schema_dump: false`,
     # or when the app uses `structure.sql` (a worker cannot `load` SQL). With nil
-    # the worker keeps its copy of the test database as it is.
+    # the worker keeps its copy of the test database as it is. An Active Record
+    # app without Rails that never set `DatabaseTasks.db_dir` has no schema file
+    # either: Active Record looks the folder up on `Rails`, which is not loaded.
     #
     # @return [String, nil] absolute path of an existing file, or nil.
     def self.ruby_schema_path
@@ -597,7 +599,13 @@ module Mutineer
       format = schema_format_for(db_config)
       return unless format == :ruby
 
-      path = ActiveRecord::Tasks::DatabaseTasks.schema_dump_path(db_config, format)
+      path = begin
+        ActiveRecord::Tasks::DatabaseTasks.schema_dump_path(db_config, format)
+      rescue NameError => e
+        raise unless e.name == :Rails
+
+        nil
+      end
       # Expanded so `load` never searches $LOAD_PATH for a relative SCHEMA value.
       path &&= File.expand_path(path)
       path if path && File.exist?(path)
