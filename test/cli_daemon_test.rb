@@ -45,16 +45,18 @@ class CliDaemonTest < Minitest::Test
     refute_equal 0, status.exitstatus
   end
 
-  def test_daemon_with_rspec_is_a_usage_error
+  def test_daemon_with_rspec_passes_daemon_validation
     _, err, status = mutineer("run", "x.rb", "--test", "t_spec.rb", "--daemon", "--rails",
                               "--framework", "rspec")
-    assert_equal 2, status.exitstatus
-    assert_includes err, "supports only --framework minitest"
+    refute_includes err, "supports only --framework"
+    refute_includes err, "needs an app to boot"
+    # Still fails later (no real app in tmpdir), not as a usage hard-exit.
+    refute_equal 0, status.exitstatus
   end
 
-  # Framework re-detect after autopair: auto-inferred *_spec.rb tests must not
-  # bypass the daemon RSpec guard when the user never passed --framework.
-  def test_daemon_rejects_auto_detected_rspec_after_autopair
+  # Framework re-detect after autopair: auto-inferred *_spec.rb tests select
+  # rspec, and the daemon accepts it.
+  def test_daemon_accepts_auto_detected_rspec_after_autopair
     require "fileutils"
     Dir.mktmpdir("mutineer-rspec-auto") do |dir|
       FileUtils.mkdir_p(File.join(dir, "lib"))
@@ -67,8 +69,11 @@ class CliDaemonTest < Minitest::Test
         "run", "lib/widget.rb", "--daemon", "--boot", "lib/widget.rb",
         chdir: dir
       )
-      assert_equal 2, status.exitstatus, err
-      assert_includes err, "supports only --framework minitest"
+      refute_includes err, "supports only --framework"
+      # Whether the daemon then boots depends on the gems around the tmpdir,
+      # so only a usage error (exit 2 before any run) is ruled out.
+      refute_includes err, "mutineer: --daemon", "no daemon usage error: #{err}"
+      refute_nil status.exitstatus
     end
   end
 

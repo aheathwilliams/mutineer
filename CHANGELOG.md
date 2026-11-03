@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **RSpec on `--daemon`.** `--daemon` no longer refuses `--framework rspec`.
+  Each worker runs the covering spec files in its own forked child against its
+  own test database, so a Rails app with RSpec on a SQLite file, PostgreSQL or
+  MySQL 8 now runs mutants in parallel. The fixture app gained a `spec/`
+  suite, and `test/runner_daemon_rspec_test.rb` checks that `--jobs 2` gives
+  the verdicts of `--jobs 1` and of the Minitest twin suite.
+
+### Fixed
+
+- **An RSpec database error scores `errored`, not `killed` (#347).** When the
+  first failing example failed with an Active Record connection or lock error,
+  the run now has no verdict, as under Minitest (#296), and stderr names the
+  error. This holds in-process and on `--daemon`. A `--matrix` row still
+  names that example as a kill.
+
 ## [1.8.1] - 2026-11-02
 
 ### Fixed

@@ -480,4 +480,56 @@ class TestRunnersRSpecTest < Minitest::Test
     assert_equal 7, code
   end
 
+  DB_ERROR = File.join(FIX, "in_test_db_error_spec.rb")
+  DB_ERROR_LINE = "[mutineer-child] a test failed with a database error, so the run has no verdict: "
+
+  # Runs the database-error fixture in a fork. Returns [exit status, stderr].
+  def run_db_error_fixture(first, second = "pass", **kwargs)
+    code, _out, err = in_fork do
+      ENV["MUTINEER_FIXTURE_FIRST"] = first
+      ENV["MUTINEER_FIXTURE_SECOND"] = second
+      Mutineer::TestRunners::RSpec.run([DB_ERROR], **kwargs)
+    end
+    [code, err]
+  end
+
+  # #347: the RSpec side of #296. A first failure that is a connection or lock
+  # error says the database broke, so the run has no verdict.
+  def test_first_failure_with_a_database_error_returns_two
+    %w[connection deadlock].each do |error|
+      code, err = run_db_error_fixture(error)
+      assert_equal 2, code, error
+      assert_includes err, DB_ERROR_LINE, error
+    end
+  end
+
+  def test_database_error_line_hides_the_password
+    _code, err = run_db_error_fixture("connection")
+    refute_includes err, "secret"
+  end
+
+  def test_database_error_after_an_ordinary_failure_still_kills
+    code, err = run_db_error_fixture("fail", "connection")
+    assert_equal 1, code
+    refute_includes err, DB_ERROR_LINE
+  end
+
+  def test_ordinary_errors_still_kill
+    %w[runtime statement_invalid connection_not_defined].each do |error|
+      code, err = run_db_error_fixture(error)
+      assert_equal 1, code, error
+      refute_includes err, DB_ERROR_LINE, error
+    end
+  end
+
+  def test_database_error_with_stop_at_first_failure_scores_error
+    verdict = nil
+    capture_subprocess_io do
+      verdict = Mutineer::Isolation.run(timeout: 10) do
+        ENV["MUTINEER_FIXTURE_FIRST"] = "deadlock"
+        Mutineer::TestRunners::RSpec.run([DB_ERROR], stop_at_first_failure: true)
+      end
+    end
+    assert_predicate verdict, :error?
+  end
 end

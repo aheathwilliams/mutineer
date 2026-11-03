@@ -9,6 +9,7 @@ DAEMON_TESTS = %w[
   test/runner_daemon_test.rb
   test/daemon_worker_db_test.rb
   test/runner_daemon_parallel_test.rb
+  test/runner_daemon_rspec_test.rb
   test/daemon_coverage_test.rb
   test/rails_dogfood_daemon_test.rb
   test/daemon_postgres_test.rb

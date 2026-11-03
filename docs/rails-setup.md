@@ -135,7 +135,7 @@ Loading the schema removes copied rows from tables it defines.
 | Missing file or `structure.sql` | Leaves the copy unchanged. |
 | `schema_dump: false` | Leaves the copy unchanged unless `SCHEMA` is set. |
 
-Supported databases are **SQLite**, **PostgreSQL**, and **MySQL 8**, with Minitest.
+Supported databases are **SQLite**, **PostgreSQL**, and **MySQL 8**, with Minitest or RSpec.
 
 | Database | Worker provisioning and cleanup |
 | --- | --- |
@@ -279,4 +279,4 @@ When Bundler prints `RubyVersionMismatch`, Mutineer reports that cause instead o
 | SimpleCov without a recognised summary, or with `print_error_status = false` | The coverage gate's exit scores `error`. |
 | Clean run prints no summary | Warns once, then counts every exit 1 as a kill. |
 
-For Ruby ≥ 3.4 with Minitest and a supported database, use [the daemon backend](https://github.com/davidteren/mutineer/blob/main/docs/rails-setup.md#faster-parallel-safe-rails-the---daemon-backend) for safe parallelism. RSpec and other serial-only setups use `--rails` without `--daemon`.
+For Ruby ≥ 3.4 with Minitest or RSpec and a supported database, use [the daemon backend](https://github.com/davidteren/mutineer/blob/main/docs/rails-setup.md#faster-parallel-safe-rails-the---daemon-backend) for safe parallelism. Serial-only setups use `--rails` without `--daemon`.
